@@ -56,6 +56,19 @@ http://www.gnu.org/licenses/ or write to the Free Software Foundation, Inc.,
 // Tested with check_gpuecm.sage
 #define CARRY_BITS 6
 
+#ifdef ECM_CGBN_ADDCONV
+/* opt-08: converged add/sub for the straight-line ladder sites.  Legal only
+ * where control flow is warp-uniform and every lane is alive: the kernel
+ * clamps out-of-range instances instead of returning (see kernel_double_add).
+ * Conditional fix-ups (if (cgbn_sub(...)) add) and normalize_addition's
+ * compare-then-sub stay on the plain (instance-mask) variants. */
+#define CGBN_ADD_CONV(_env, r, a, b) cgbn_add_conv(_env, r, a, b)
+#define CGBN_SUB_CONV(_env, r, a, b) cgbn_sub_conv(_env, r, a, b)
+#else
+#define CGBN_ADD_CONV(_env, r, a, b) cgbn_add(_env, r, a, b)
+#define CGBN_SUB_CONV(_env, r, a, b) cgbn_sub(_env, r, a, b)
+#endif
+
 // Can dramatically change compile time
 #if 1
     #define FORCE_INLINE __forceinline__
@@ -222,7 +235,7 @@ class curve_t {
     }
 
     // Can't overflow because of CARRY_BITS
-    int32_t carry_q = cgbn_add(_env, r, r, temp);
+    int32_t carry_q = CGBN_ADD_CONV(_env, r, r, temp);
     carry_q += cgbn_add_ui32(_env, r, r, t1_0 != 0); // add 1
 
     if (carry_q > 0) {
@@ -266,15 +279,15 @@ class curve_t {
     /* Might be nice to add a macro that verifies no carry out of cgbn_add */
 
     // Is there anything interesting like only one of these can overflow?
-    cgbn_add(_env, t, v, w); // t = (bZ + bX)
+    CGBN_ADD_CONV(_env, t, v, w); // t = (bZ + bX)
     normalize_addition(t, modulus);
-    if (cgbn_sub(_env, v, v, w)) // v = (bZ - bX)
+    if (CGBN_SUB_CONV(_env, v, v, w)) // v = (bZ - bX)
         cgbn_add(_env, v, v, modulus);
 
 
-    cgbn_add(_env, w, u, q); // w = (aZ + aX)
+    CGBN_ADD_CONV(_env, w, u, q); // w = (aZ + aX)
     normalize_addition(w, modulus);
-    if (cgbn_sub(_env, u, u, q)) // u = (aZ - aX)
+    if (CGBN_SUB_CONV(_env, u, u, q)) // u = (aZ - aX)
         cgbn_add(_env, u, u, modulus);
     if (VERIFY_NORMALIZED) {
         assert_normalized(t, modulus);
@@ -315,7 +328,7 @@ class curve_t {
     special_mult_ui32(dK, d, modulus, np0); // dK = K*d
         assert_normalized(dK, modulus);
 
-    cgbn_add(_env, u, BB, dK); // BB + dK
+    CGBN_ADD_CONV(_env, u, BB, dK); // BB + dK
     normalize_addition(u, modulus);
     if (VERIFY_NORMALIZED) {
         assert_normalized(K, modulus);
@@ -328,9 +341,9 @@ class curve_t {
     normalize_addition(u, modulus);
         assert_normalized(u, modulus);
 
-    cgbn_add(_env, w, DA, CB); // DA + CB
+    CGBN_ADD_CONV(_env, w, DA, CB); // DA + CB
     normalize_addition(w, modulus);
-    if (cgbn_sub(_env, v, DA, CB)) // DA - CB
+    if (CGBN_SUB_CONV(_env, v, DA, CB)) // DA - CB
         cgbn_add(_env, v, v, modulus);
     if (VERIFY_NORMALIZED) {
         assert_normalized(w, modulus);
@@ -371,8 +384,16 @@ __global__ void kernel_double_add(
         ) {
   // decode an instance_i number from the blockIdx and threadIdx
   int32_t instance_i = (blockIdx.x*blockDim.x + threadIdx.x)/params::TPI;
+#ifdef ECM_CGBN_ADDCONV
+  /* Converged collectives require every lane in the warp to be alive: clamp
+   * out-of-range instances onto the last real one instead of exiting.  They
+   * compute duplicate data and skip the stores below. */
+  const bool instance_active = (instance_i < (int32_t)count);
+  instance_i = min(instance_i, (int32_t)count-1);
+#else
   if(instance_i >= count)
     return;
+#endif
 
   /* Cast uint32_t array to mem_t */
   typename curve_t<params>::mem_t *data_cast = (typename curve_t<params>::mem_t*) data;
@@ -445,10 +466,15 @@ __global__ void kernel_double_add(
       curve.assert_normalized(bX, modulus);
       curve.assert_normalized(bZ, modulus);
     }
+#ifdef ECM_CGBN_ADDCONV
+    if (instance_active)  // clamped duplicates mirror the last instance
+#endif
+    {
     cgbn_store(curve._env, &data_cast[5*instance_i+1], aX);
     cgbn_store(curve._env, &data_cast[5*instance_i+2], aZ);
     cgbn_store(curve._env, &data_cast[5*instance_i+3], bX);
     cgbn_store(curve._env, &data_cast[5*instance_i+4], bZ);
+    }
   }
 }
 
