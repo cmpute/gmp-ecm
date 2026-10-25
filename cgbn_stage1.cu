@@ -190,11 +190,28 @@ class curve_t {
     }
   }
 
+  /* Branch-free, warp-uniform normalization: r in [0, 2*modulus) -> [0, modulus).
+   * Every lane executes the same collectives, so the full-warp-mask conv
+   * variants are legal.  cgbn_sub_conv returns 1 iff r < modulus (the borrow
+   * is broadcast to every lane of the instance by the resolver's shfl), and
+   * the select below is a per-lane register operation on limb registers. */
+  __device__ FORCE_INLINE void normalize_add_conv(bn_t &r, const bn_t &modulus) {
+      bn_t t;
+      const uint32_t borrow = cgbn_sub_conv(_env, t, r, modulus); // 1 iff r < modulus
+      #pragma unroll
+      for (uint32_t i = 0; i < sizeof(r._limbs)/sizeof(uint32_t); i++)
+          r._limbs[i] = borrow ? r._limbs[i] : t._limbs[i];
+  }
+
   // Normalize after addition
   __device__ FORCE_INLINE void normalize_addition(bn_t &r, const bn_t &modulus) {
+#ifdef ECM_CGBN_NORMCONV
+      normalize_add_conv(r, modulus);
+#else
       if (cgbn_compare(_env, r, modulus) >= 0) {
           cgbn_sub(_env, r, r, modulus);
       }
+#endif
   }
 
   // Normalize after subtraction (handled instead by checking carry)
@@ -249,9 +266,13 @@ class curve_t {
     }
 
     // 0 <= r, temp < modulus => r + temp + 1 < 2*modulus
+#ifdef ECM_CGBN_NORMCONV
+    normalize_add_conv(r, modulus);
+#else
     if (cgbn_compare(_env, r, modulus) >= 0) {
         cgbn_sub(_env, r, r, modulus);
     }
+#endif
   }
 
   /**
@@ -297,15 +318,23 @@ class curve_t {
     }
 
     cgbn_mont_mul(_env, CB, t, u, modulus, np0); // C*B
+#ifndef ECM_CGBN_NORMDROP
+    /* mont_reduce_wide already returns r in [0, modulus): this normalize is a
+     * provable no-op (asserted by VERIFY_NORMALIZED builds). */
         normalize_addition(CB, modulus);
+#endif
     cgbn_mont_mul(_env, DA, v, w, modulus, np0); // D*A
+#ifndef ECM_CGBN_NORMDROP
         normalize_addition(DA, modulus);
+#endif
 
     /* Roughly 40% of time is spent in these two calls */
     cgbn_mont_sqr(_env, AA, w, modulus, np0);    // AA
     cgbn_mont_sqr(_env, BB, u, modulus, np0);    // BB
+#ifndef ECM_CGBN_NORMDROP
     normalize_addition(AA, modulus);
     normalize_addition(BB, modulus);
+#endif
     if (VERIFY_NORMALIZED) {
         assert_normalized(CB, modulus);
         assert_normalized(DA, modulus);
@@ -315,7 +344,9 @@ class curve_t {
 
     // q = aX is finalized
     cgbn_mont_mul(_env, q, AA, BB, modulus, np0); // AA*BB
+#ifndef ECM_CGBN_NORMDROP
     normalize_addition(q, modulus);
+#endif
         assert_normalized(q, modulus);
 
     if (cgbn_sub(_env, K, AA, BB)) // K = AA-BB
@@ -338,7 +369,9 @@ class curve_t {
 
     // u = aZ is finalized
     cgbn_mont_mul(_env, u, K, u, modulus, np0); // K(BB+dK)
+#ifndef ECM_CGBN_NORMDROP
     normalize_addition(u, modulus);
+#endif
         assert_normalized(u, modulus);
 
     CGBN_ADD_CONV(_env, w, DA, CB); // DA + CB
@@ -352,11 +385,15 @@ class curve_t {
 
     // w = bX is finalized
     cgbn_mont_sqr(_env, w, w, modulus, np0); // (DA+CB)^2 mod N
+#ifndef ECM_CGBN_NORMDROP
     normalize_addition(w, modulus);
+#endif
         assert_normalized(w, modulus);
 
     cgbn_mont_sqr(_env, v, v, modulus, np0); // (DA-CB)^2 mod N
+#ifndef ECM_CGBN_NORMDROP
     normalize_addition(v, modulus);
+#endif
         assert_normalized(v, modulus);
 
     // v = bZ is finalized
