@@ -797,20 +797,24 @@ int cgbn_ecm_stage1(mpz_t *factors, int *array_found,
    * warning is printed when a particular N might benefit from a custom sized
    * kernel.
    */
+  typedef cgbn_params_t<8, 768>   cgbn_params_768;
+  typedef cgbn_params_t<8, 1280>  cgbn_params_1280;
   typedef cgbn_params_t<8, 1536>  cgbn_params_1536;
   typedef cgbn_params_t<8, 2048>  cgbn_params_2048;
+  typedef cgbn_params_t<16, 2560> cgbn_params_2560;
   typedef cgbn_params_t<16, 3072> cgbn_params_3072;
   typedef cgbn_params_t<16, 4096> cgbn_params_4096;
+  typedef cgbn_params_t<16, 4608> cgbn_params_4608;
   typedef cgbn_params_t<16, 6144> cgbn_params_6144;
   typedef cgbn_params_t<16, 8192> cgbn_params_8192;
+  typedef cgbn_params_t<32, 10240> cgbn_params_10240;
   typedef cgbn_params_t<32, 12288> cgbn_params_12288;
-  available_kernels.push_back((uint32_t)cgbn_params_1536::BITS);
-  available_kernels.push_back((uint32_t)cgbn_params_2048::BITS);
-  available_kernels.push_back((uint32_t)cgbn_params_3072::BITS);
-  available_kernels.push_back((uint32_t)cgbn_params_4096::BITS);
-  available_kernels.push_back((uint32_t)cgbn_params_6144::BITS);
-  available_kernels.push_back((uint32_t)cgbn_params_8192::BITS);
-  available_kernels.push_back((uint32_t)cgbn_params_12288::BITS);
+  /* Ascending order matters: the selection below takes the first kernel
+   * with BITS >= bits(N) + CARRY_BITS.  Only sizes whose limb count is a
+   * multiple of TPI are used (PADDING == 0). */
+  available_kernels.clear();
+  for (uint32_t b : {512u, 768u, 1024u, 1280u, 1536u, 2048u, 2560u, 3072u, 4096u, 4608u, 6144u, 8192u, 10240u, 12288u})
+    available_kernels.push_back(b);
 #endif
 
   /* Pointer to CUDA kernel. */
@@ -833,24 +837,39 @@ int cgbn_ecm_stage1(mpz_t *factors, int *array_found,
         TPI = cgbn_params_medium::TPI;
         kernel = kernel_double_add<cgbn_params_medium>;
 #ifndef IS_DEV_BUILD
+      } else if (BITS == cgbn_params_768::BITS) {
+        TPI = cgbn_params_768::TPI;
+        kernel = kernel_double_add<cgbn_params_768>;
+      } else if (BITS == cgbn_params_1280::BITS) {
+        TPI = cgbn_params_1280::TPI;
+        kernel = kernel_double_add<cgbn_params_1280>;
       } else if (BITS == cgbn_params_1536::BITS) {
         TPI = cgbn_params_1536::TPI;
         kernel = kernel_double_add<cgbn_params_1536>;
       } else if (BITS == cgbn_params_2048::BITS) {
         TPI = cgbn_params_2048::TPI;
         kernel = kernel_double_add<cgbn_params_2048>;
+      } else if (BITS == cgbn_params_2560::BITS) {
+        TPI = cgbn_params_2560::TPI;
+        kernel = kernel_double_add<cgbn_params_2560>;
       } else if (BITS == cgbn_params_3072::BITS) {
         TPI = cgbn_params_3072::TPI;
         kernel = kernel_double_add<cgbn_params_3072>;
       } else if (BITS == cgbn_params_4096::BITS) {
         TPI = cgbn_params_4096::TPI;
         kernel = kernel_double_add<cgbn_params_4096>;
+      } else if (BITS == cgbn_params_4608::BITS) {
+        TPI = cgbn_params_4608::TPI;
+        kernel = kernel_double_add<cgbn_params_4608>;
       } else if (BITS == cgbn_params_6144::BITS) {
         TPI = cgbn_params_6144::TPI;
         kernel = kernel_double_add<cgbn_params_6144>;
       } else if (BITS == cgbn_params_8192::BITS) {
         TPI = cgbn_params_8192::TPI;
         kernel = kernel_double_add<cgbn_params_8192>;
+      } else if (BITS == cgbn_params_10240::BITS) {
+        TPI = cgbn_params_10240::TPI;
+        kernel = kernel_double_add<cgbn_params_10240>;
       } else if (BITS == cgbn_params_12288::BITS) {
         TPI = cgbn_params_12288::TPI;
         kernel = kernel_double_add<cgbn_params_12288>;
